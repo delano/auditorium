@@ -1,0 +1,15 @@
+__pycache__/
+*.py[cod]
+.DS_Store
+.env
+.env.*
+*.sqlite
+*.sqlite3
+*.db
+*-journal
+*-wal
+*-shm
+backups/
+*-preview.png
+data/*
+!data/.gitkeep
