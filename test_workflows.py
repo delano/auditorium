@@ -1,0 +1,48 @@
+"""Manual handoff checks using only synthetic findings."""
+from pathlib import Path
+import tempfile
+import unittest
+from unittest.mock import patch
+from database_files import create_database
+from discovery import discovery_prompt
+from submission import batch_plan, connection, create_batch, select_batch
+
+class WorkflowTests(unittest.TestCase):
+    def setUp(self):
+        self.temp=tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.database=Path(self.temp.name)/'audit.sqlite'
+        self.repository=Path(self.temp.name)/'docs'
+        create_database(str(self.database),self.repository)
+        with connection(self.database) as conn:
+            conn.execute("""INSERT INTO findings(id,severity,confidence,category,path,title,issue,reader_impact,evidence,verification,page_branch,fix_notes)
+                VALUES('EX1','low','high','wording','src/content/docs/en/example.md','Example','Example issue','Example impact','Synthetic evidence','Synthetic verification','main','Use the operator wording')""")
+            conn.execute("UPDATE findings SET in_batch=1 WHERE id='EX1'")
+
+    def test_plan_preserves_operator_scope_and_manual_launch(self):
+        with connection(self.database) as conn,patch('submission.setup_check',return_value=''):
+            plan=batch_plan(conn,self.repository)
+        self.assertEqual(plan['finding_ids'],['EX1'])
+        self.assertEqual(plan['snapshot'][0]['fix_notes'],'Use the operator wording')
+        self.assertEqual(plan['mode'],'operator_handoff')
+        self.assertIn('does not\nstart or monitor an agent',plan['prompt'])
+        self.assertIn(str(self.database),plan['prompt'])
+
+    def test_multiple_drafts_preserve_their_membership(self):
+        second=create_batch(self.database)['batch_id']
+        select_batch(self.database,1)
+        with connection(self.database) as conn,patch('submission.setup_check',return_value=''):
+            self.assertEqual(batch_plan(conn,self.repository)['finding_ids'],['EX1'])
+        select_batch(self.database,second)
+        with connection(self.database) as conn,patch('submission.setup_check',return_value=''):
+            self.assertEqual(batch_plan(conn,self.repository)['finding_ids'],[])
+
+    def test_research_prompt_names_the_file_and_current_schema(self):
+        with connection(self.database) as conn:
+            prompt=discovery_prompt(conn,self.database,self.repository)
+        self.assertIn(str(self.database),prompt)
+        self.assertIn('CREATE TABLE findings',prompt)
+        self.assertIn('exploration only',prompt)
+        self.assertIn('manually',prompt)
+
+if __name__=='__main__': unittest.main()
