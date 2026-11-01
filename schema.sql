@@ -3,6 +3,8 @@
 CREATE TABLE batch_findings (
             batch_id INTEGER NOT NULL REFERENCES batches(id) ON DELETE CASCADE,
             finding_id TEXT NOT NULL REFERENCES findings(id) ON DELETE CASCADE, created_at TEXT, modified_at TEXT,
+            review_action TEXT CHECK(review_action IN ('needs_work','revert')),
+            review_notes TEXT, reviewed_at TEXT,
             PRIMARY KEY (batch_id,finding_id)
         );
 
@@ -50,7 +52,7 @@ BEGIN
 END;
 
 CREATE TRIGGER batch_findings_timestamps_update AFTER UPDATE ON batch_findings
-WHEN OLD."batch_id" IS NOT NEW."batch_id" OR OLD."finding_id" IS NOT NEW."finding_id"
+WHEN OLD."batch_id" IS NOT NEW."batch_id" OR OLD."finding_id" IS NOT NEW."finding_id" OR OLD.review_action IS NOT NEW.review_action OR OLD.review_notes IS NOT NEW.review_notes OR OLD.reviewed_at IS NOT NEW.reviewed_at
 BEGIN
     UPDATE batch_findings SET modified_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE rowid=NEW.rowid;
 END;
@@ -172,4 +174,76 @@ CREATE TRIGGER discovery_prompts_timestamps_update AFTER UPDATE ON discovery_pro
 WHEN OLD.id IS NOT NEW.id OR OLD.prompt IS NOT NEW.prompt
 BEGIN
     UPDATE discovery_prompts SET modified_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=NEW.id;
+END;
+
+CREATE TABLE pull_request_details (
+    batch_id INTEGER NOT NULL, url TEXT NOT NULL,
+    metadata_json TEXT, fetched_at TEXT, error TEXT,
+    created_at TEXT, modified_at TEXT,
+    PRIMARY KEY(batch_id,url),
+    FOREIGN KEY(batch_id,url) REFERENCES batch_pull_requests(batch_id,url) ON DELETE CASCADE
+);
+CREATE TABLE finding_validations (
+    id INTEGER PRIMARY KEY, batch_id INTEGER NOT NULL, finding_id TEXT NOT NULL,
+    pr_url TEXT NOT NULL, revision TEXT NOT NULL,
+    outcome TEXT NOT NULL CHECK(outcome IN ('pass','needs_work','blocked')),
+    summary TEXT NOT NULL, target_url TEXT, reporter TEXT NOT NULL,
+    recommendation TEXT CHECK(recommendation IN ('accept','needs_work','revert')),
+    accepted_at TEXT, created_at TEXT, modified_at TEXT,
+    FOREIGN KEY(batch_id,finding_id) REFERENCES batch_findings(batch_id,finding_id),
+    FOREIGN KEY(batch_id,pr_url) REFERENCES batch_pull_requests(batch_id,url)
+);
+CREATE INDEX finding_validation_history ON finding_validations(batch_id,finding_id,id);
+CREATE TABLE validation_evidence (
+    id INTEGER PRIMARY KEY, validation_id INTEGER NOT NULL REFERENCES finding_validations(id),
+    label TEXT NOT NULL, mime_type TEXT NOT NULL CHECK(mime_type IN ('image/png','image/jpeg','image/webp')),
+    content BLOB NOT NULL, created_at TEXT, modified_at TEXT
+);
+CREATE TABLE batch_completions (
+    batch_id INTEGER PRIMARY KEY REFERENCES batches(id),
+    completed_at TEXT NOT NULL, created_at TEXT, modified_at TEXT
+);
+
+CREATE TRIGGER pull_request_details_timestamps_insert AFTER INSERT ON pull_request_details
+BEGIN
+    UPDATE pull_request_details SET created_at=COALESCE(NEW.created_at,strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+        modified_at=COALESCE(NEW.modified_at,strftime('%Y-%m-%dT%H:%M:%fZ','now')) WHERE rowid=NEW.rowid;
+END;
+CREATE TRIGGER pull_request_details_timestamps_update AFTER UPDATE ON pull_request_details
+WHEN OLD.batch_id IS NOT NEW.batch_id OR OLD.url IS NOT NEW.url OR OLD.metadata_json IS NOT NEW.metadata_json OR OLD.fetched_at IS NOT NEW.fetched_at OR OLD.error IS NOT NEW.error
+BEGIN
+    UPDATE pull_request_details SET modified_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE rowid=NEW.rowid;
+END;
+
+CREATE TRIGGER finding_validations_timestamps_insert AFTER INSERT ON finding_validations
+BEGIN
+    UPDATE finding_validations SET created_at=COALESCE(NEW.created_at,strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+        modified_at=COALESCE(NEW.modified_at,strftime('%Y-%m-%dT%H:%M:%fZ','now')) WHERE rowid=NEW.rowid;
+END;
+CREATE TRIGGER finding_validations_timestamps_update AFTER UPDATE ON finding_validations
+WHEN OLD.id IS NOT NEW.id OR OLD.batch_id IS NOT NEW.batch_id OR OLD.finding_id IS NOT NEW.finding_id OR OLD.pr_url IS NOT NEW.pr_url OR OLD.revision IS NOT NEW.revision OR OLD.outcome IS NOT NEW.outcome OR OLD.summary IS NOT NEW.summary OR OLD.target_url IS NOT NEW.target_url OR OLD.reporter IS NOT NEW.reporter OR OLD.accepted_at IS NOT NEW.accepted_at OR OLD.recommendation IS NOT NEW.recommendation
+BEGIN
+    UPDATE finding_validations SET modified_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE rowid=NEW.rowid;
+END;
+
+CREATE TRIGGER validation_evidence_timestamps_insert AFTER INSERT ON validation_evidence
+BEGIN
+    UPDATE validation_evidence SET created_at=COALESCE(NEW.created_at,strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+        modified_at=COALESCE(NEW.modified_at,strftime('%Y-%m-%dT%H:%M:%fZ','now')) WHERE rowid=NEW.rowid;
+END;
+CREATE TRIGGER validation_evidence_timestamps_update AFTER UPDATE ON validation_evidence
+WHEN OLD.id IS NOT NEW.id OR OLD.validation_id IS NOT NEW.validation_id OR OLD.label IS NOT NEW.label OR OLD.mime_type IS NOT NEW.mime_type OR OLD.content IS NOT NEW.content
+BEGIN
+    UPDATE validation_evidence SET modified_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE rowid=NEW.rowid;
+END;
+
+CREATE TRIGGER batch_completions_timestamps_insert AFTER INSERT ON batch_completions
+BEGIN
+    UPDATE batch_completions SET created_at=COALESCE(NEW.created_at,strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+        modified_at=COALESCE(NEW.modified_at,strftime('%Y-%m-%dT%H:%M:%fZ','now')) WHERE rowid=NEW.rowid;
+END;
+CREATE TRIGGER batch_completions_timestamps_update AFTER UPDATE ON batch_completions
+WHEN OLD.batch_id IS NOT NEW.batch_id OR OLD.completed_at IS NOT NEW.completed_at
+BEGIN
+    UPDATE batch_completions SET modified_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE rowid=NEW.rowid;
 END;

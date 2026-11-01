@@ -6,8 +6,9 @@ import argparse
 from datetime import datetime, timezone
 import json
 import sqlite3
-from urllib.parse import unquote
+from urllib.parse import unquote, urlsplit, parse_qs
 from discovery import discovery_prompt
+import review
 from database_files import create_database, file_dialog
 from submission import (DEFAULT_REPO, MODE, batch_plan, submit_batch,
     create_batch, select_batch, dismiss_handoff, save_pr_url)
@@ -21,8 +22,12 @@ REQUIRED_COLUMNS = {
     'coverage': set('path locale publication review_status review_basis notes created_at modified_at'.split()),
     'metadata': {'key', 'value', 'created_at', 'modified_at'},
     'batches': set('id name branch worktree is_current created_at modified_at status base_branch base_revision agent_prompt finding_snapshot submitted_at finished_at error result_summary handoff_dismissed'.split()),
-    'batch_findings': {'batch_id','finding_id','created_at','modified_at'},
+    'batch_findings': {'batch_id','finding_id','created_at','modified_at','review_action','review_notes','reviewed_at'},
     'batch_pull_requests': {'batch_id','url','created_at','modified_at'},
+    'pull_request_details': set('batch_id url metadata_json fetched_at error created_at modified_at'.split()),
+    'finding_validations': set('id batch_id finding_id pr_url revision outcome summary target_url reporter recommendation accepted_at created_at modified_at'.split()),
+    'validation_evidence': set('id validation_id label mime_type content created_at modified_at'.split()),
+    'batch_completions': set('batch_id completed_at created_at modified_at'.split()),
 }
 
 def audit_database(value):
@@ -42,7 +47,7 @@ def audit_database(value):
                 if not required.issubset(columns):
                     raise ValueError('This file does not match the current audit schema. Open it with its matching application snapshot.')
             triggers = {row[0] for row in conn.execute("SELECT name FROM sqlite_schema WHERE type='trigger'")}
-            required = {table+'_timestamps_'+event for table in TABLES for event in ('insert','update')}
+            required = {table+'_timestamps_'+event for table in (*TABLES, *review.REVIEW_TABLES) for event in ('insert','update')}
             required.add('findings_target_default')
             if not required.issubset(triggers):
                 raise ValueError('This file does not match the current audit schema. Required triggers are missing.')
@@ -92,6 +97,18 @@ class Handler(BaseHTTPRequestHandler):
         route = self.path.split('?', 1)[0]
         if route == '/':
             self.send_data(200, 'text/html; charset=utf-8', (HERE / 'viewer.html').read_bytes())
+        elif route in ('/review.js','/review.css'):
+            self.send_data(200, 'text/javascript' if route.endswith('.js') else 'text/css', (HERE/route[1:]).read_bytes())
+        elif route == '/api/evidence':
+            try:
+                query=parse_qs(urlsplit(self.path).query)
+                database=audit_database(query['database'][0])
+                with sqlite3.connect(database.as_uri()+'?mode=ro',uri=True) as conn:
+                    row=conn.execute('SELECT mime_type,content FROM validation_evidence WHERE id=?',(int(query['id'][0]),)).fetchone()
+                if not row: raise ValueError('Screenshot not found.')
+                self.send_data(200,row[0],row[1])
+            except (KeyError,ValueError,sqlite3.Error) as exc:
+                self.send_json(400,{'error':str(exc)})
         elif route in ('/api/data', '/api/schema', '/api/submission', '/api/batches', '/api/databases', '/api/discovery'):
             try:
                 database = self.database
@@ -115,6 +132,8 @@ class Handler(BaseHTTPRequestHandler):
                         data.update({table: [dict(row) for row in conn.execute('SELECT * FROM ' + table)] for table in TABLES})
                     elif route == '/api/batches':
                         data.update({table:[dict(row) for row in conn.execute('SELECT * FROM '+table)] for table in ('batches','batch_findings','batch_pull_requests')})
+                    if route in ('/api/data','/api/batches'):
+                        data.update(review.read_review(conn))
                 self.send_json(200, data)
             except ValueError as exc:
                 self.send_json(400, {'error': str(exc)})
@@ -131,12 +150,14 @@ class Handler(BaseHTTPRequestHandler):
             return
         if self.path not in ('/api/batch', '/api/notes', '/api/finding-target', '/api/delete', '/api/submit-batch',
                              '/api/new-batch','/api/select-batch','/api/dismiss-handoff','/api/batch-pr',
-                             '/api/load-database','/api/create-database','/api/file-dialog'):
+                             '/api/load-database','/api/create-database','/api/file-dialog',
+                             '/api/refresh-prs','/api/remove-pr','/api/validation-prompt','/api/re-review-prompt','/api/validation',
+                             '/api/finding-decision','/api/complete-batch','/api/reopen-batch','/api/outstanding-findings'):
             self.send_json(404, {'error': 'Not found'})
             return
         try:
             length = int(self.headers.get('Content-Length', '0'))
-            if not 0 < length <= 262144:
+            if not 0 < length <= (29*1024*1024 if self.path=='/api/validation' else 262144):
                 raise ValueError('Invalid request size')
             payload = json.loads(self.rfile.read(length))
             if self.path in ('/api/load-database','/api/create-database','/api/file-dialog'):
@@ -150,6 +171,31 @@ class Handler(BaseHTTPRequestHandler):
                 self.send_json(200, {'database':str(database)})
                 return
             database = self.database
+            if self.path in ('/api/refresh-prs','/api/remove-pr','/api/validation-prompt','/api/re-review-prompt','/api/validation','/api/finding-decision','/api/complete-batch','/api/reopen-batch','/api/outstanding-findings'):
+                if not isinstance(payload,dict): raise ValueError('Expected a review request.')
+                if self.path == '/api/finding-decision':
+                    result=review.decide_finding(database,payload)
+                else:
+                    if type(payload.get('batch_id')) is not int: raise ValueError('A batch ID is required.')
+                    if self.path == '/api/refresh-prs': result=review.refresh_prs(database,payload['batch_id'])
+                    elif self.path == '/api/remove-pr': result=review.remove_pr(database,payload['batch_id'],payload.get('url',''))
+                    elif self.path == '/api/validation': result=review.record_validation(database,payload)
+                    elif self.path == '/api/complete-batch': result=review.complete_batch(database,payload['batch_id'])
+                    elif self.path == '/api/reopen-batch': result=review.reopen_batch(database,payload['batch_id'])
+                    elif self.path == '/api/outstanding-findings':
+                        with review.connection(database) as conn:
+                            result={'text':review.outstanding_findings(conn,database,payload['batch_id'])}
+                    elif self.path == '/api/re-review-prompt':
+                        if set(payload) != {'batch_id','finding_id'} or not isinstance(payload['finding_id'],str) or not payload['finding_id'].strip():
+                            raise ValueError('Provide a batch ID and a finding ID for re-review.')
+                        with review.connection(database) as conn:
+                            result={'prompt':review.validation_prompt(conn,database,payload['batch_id'],finding_id=payload['finding_id'])}
+                    else:
+                        with review.connection(database) as conn:
+                            if set(payload) != {'batch_id'}: raise ValueError('Provide only a batch ID for validation.')
+                            result={'prompt':review.validation_prompt(conn,database,payload['batch_id'])}
+                self.send_json(200,result)
+                return
             if self.path=='/api/new-batch':
                 if not isinstance(payload,dict):
                     raise ValueError('Expected a batch request')

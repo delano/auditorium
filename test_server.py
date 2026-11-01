@@ -124,6 +124,43 @@ class ViewerTests(unittest.TestCase):
             self.assertIn('Choose a target branch for: H1',state['plan']['blocker'])
             self.assertEqual(self.post('/api/submit-batch',self.payload(state))[0],400)
 
+    def test_validation_prompt_is_batch_only_and_references_the_pinned_database(self):
+        with submission.connection(self.db) as conn:
+            conn.execute("UPDATE batches SET status='in_progress' WHERE id=1")
+            conn.executemany('INSERT INTO batch_findings(batch_id,finding_id) VALUES(1,?)',[('H1',),('H2',)])
+        other=self.copy_database()
+        code,result=self.post('/api/validation-prompt',{'batch_id':1},database=other)
+        self.assertEqual(code,200)
+        self.assertIn(str(other),result['prompt'])
+        self.assertNotIn(str(self.db),result['prompt'])
+        self.assertIn('every finding in Auditorium Batch #1',result['prompt'])
+        self.assertNotIn('Example finding H1',result['prompt'])
+        self.assertNotIn('Example finding H2',result['prompt'])
+        code,result=self.post('/api/validation-prompt',{'batch_id':1,'finding_id':'H1'})
+        self.assertEqual(code,400)
+
+    def test_re_review_prompt_checks_membership_and_uses_the_pinned_database(self):
+        with submission.connection(self.db) as conn:
+            conn.execute("UPDATE batches SET status='in_progress' WHERE id=1")
+            conn.execute("INSERT INTO batch_findings(batch_id,finding_id) VALUES(1,'H1')")
+        other=self.copy_database()
+        with submission.connection(self.db) as conn:
+            conn.execute("DELETE FROM batch_findings WHERE batch_id=1 AND finding_id='H1'")
+        payload={'batch_id':1,'finding_id':'H1'}
+        code,result=self.post('/api/re-review-prompt',payload,database=other)
+        self.assertEqual(code,200)
+        self.assertIn(str(other),result['prompt'])
+        self.assertNotIn(str(self.db),result['prompt'])
+        self.assertIn('Re-review only finding "H1"',result['prompt'])
+        self.assertIn('"finding_id": "H1"',result['prompt'])
+        self.assertEqual(self.post('/api/re-review-prompt',payload)[0],400)
+        for invalid in ({'batch_id':1},{'batch_id':1,'finding_id':'H2'},{'batch_id':1,'finding_id':None},{'batch_id':1,'finding_id':''},{'batch_id':1,'finding_id':'H1','extra':True}):
+            self.assertEqual(self.post('/api/re-review-prompt',invalid,database=other)[0],400)
+        self.assertEqual(self.post('/api/re-review-prompt',payload,origin='https://example.test',database=other)[0],403)
+        with submission.connection(other) as conn:
+            self.assertEqual(conn.execute('SELECT count(*) FROM finding_validations').fetchone()[0],0)
+            self.assertIsNone(conn.execute("SELECT review_action FROM batch_findings WHERE batch_id=1 AND finding_id='H1'").fetchone()[0])
+
     def copy_database(self, name='second audit 日本語.sqlite'):
         path=(Path(self.temp.name)/name).resolve()
         with sqlite3.connect(self.db) as source,sqlite3.connect(path) as target:
@@ -539,7 +576,8 @@ class ViewerTests(unittest.TestCase):
             self.assertEqual(self.post('/api/batch-pr',{'batch_id':batch_id,'url':'javascript:alert(1)'})[0],400)
         with sqlite3.connect(self.db) as conn:
             self.assertEqual(conn.execute('SELECT url FROM batch_pull_requests WHERE batch_id=?',(batch_id,)).fetchall(),[(url,)])
-        self.assertEqual(self.post('/api/batch-pr',{'batch_id':batch_id,'url':''})[0],200)
+        self.assertEqual(self.post('/api/batch-pr',{'batch_id':batch_id,'url':''})[0],400)
+        self.assertEqual(self.post('/api/remove-pr',{'batch_id':batch_id,'url':url})[0],200)
         self.assertEqual(self.post('/api/batch-pr',{'batch_id':batch_id,'url':url},origin='https://example.com')[0],403)
         with sqlite3.connect(self.db) as conn:
             self.assertEqual(conn.execute('SELECT count(*) FROM batch_pull_requests WHERE batch_id=?',(batch_id,)).fetchone()[0],0)

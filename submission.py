@@ -64,22 +64,20 @@ def dismiss_handoff(database, batch_id):
 def save_pr_url(database, batch_id, url):
     """Save the operator's pasted PR URL without fetching or claiming verification."""
     url = url.strip()
-    if url:
-        parsed = urlsplit(url)
-        url = f'{parsed.scheme}://{parsed.netloc}{parsed.path.rstrip("/")}'
-        if not re.fullmatch(r'https://github\.com/'+re.escape(GITHUB_REPO)+r'/pull/[1-9]\d*',url):
-            raise ValueError('Paste a PR URL from '+GITHUB_REPO+'.')
+    parsed = urlsplit(url)
+    url = f'{parsed.scheme}://{parsed.netloc}{parsed.path.rstrip("/")}'
+    if not re.fullmatch(r'https://github\.com/'+re.escape(GITHUB_REPO)+r'/pull/[1-9]\d*',url):
+        raise ValueError('Paste a PR URL from '+GITHUB_REPO+'.')
     with connection(database) as conn:
         conn.execute('BEGIN IMMEDIATE')
         batch = conn.execute('SELECT status FROM batches WHERE id=?',(batch_id,)).fetchone()
         if batch is None or batch['status'] in PREPARING:
             raise ValueError('Submit the batch before adding its PR URL.')
-        conn.execute('DELETE FROM batch_pull_requests WHERE batch_id=?',(batch_id,))
-        if url:
-            conn.execute('INSERT INTO batch_pull_requests(batch_id,url) VALUES(?,?)',(batch_id,url))
-        status = 'pr_open' if url else 'in_progress'
-        conn.execute('UPDATE batches SET status=? WHERE id=?',(status,batch_id))
-    return {'ok':True,'batch_id':batch_id,'url':url,'status':status}
+        if conn.execute('SELECT 1 FROM batch_completions WHERE batch_id=?',(batch_id,)).fetchone():
+            raise ValueError('Reopen this batch before adding a PR.')
+        conn.execute('INSERT OR IGNORE INTO batch_pull_requests(batch_id,url) VALUES(?,?)',(batch_id,url))
+        conn.execute("UPDATE batches SET status='pr_open' WHERE id=?",(batch_id,))
+    return {'ok':True,'batch_id':batch_id,'url':url,'status':'pr_open'}
 
 
 def connection(database):
