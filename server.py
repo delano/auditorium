@@ -14,8 +14,9 @@ from submission import (DEFAULT_REPO, MODE, batch_plan, submit_batch,
 
 HERE = Path(__file__).resolve().parent
 DEFAULT_DB = HERE / 'data' / 'auditorium.sqlite'
-TABLES = ('findings', 'coverage', 'metadata', 'batches', 'batch_findings', 'batch_pull_requests')
+TABLES = ('findings', 'coverage', 'metadata', 'batches', 'batch_findings', 'batch_pull_requests', 'discovery_prompts')
 REQUIRED_COLUMNS = {
+    'discovery_prompts': {'id','prompt','created_at','modified_at'},
     'findings': set('id severity confidence category locale path line title issue reader_impact evidence suggested_correction verification status page_url page_branch verbatim_content reason in_batch fix_notes created_at modified_at'.split()),
     'coverage': set('path locale publication review_status review_basis notes created_at modified_at'.split()),
     'metadata': {'key', 'value', 'created_at', 'modified_at'},

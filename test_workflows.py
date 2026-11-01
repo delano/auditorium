@@ -44,5 +44,25 @@ class WorkflowTests(unittest.TestCase):
         self.assertIn('CREATE TABLE findings',prompt)
         self.assertIn('exploration only',prompt)
         self.assertIn('manually',prompt)
+        self.assertIn('CREATE TABLE discovery_prompts',prompt)
+        self.assertIn('prompt verbatim',prompt)
+        self.assertIn('including any operator research',prompt)
+        self.assertIn('INSERT INTO discovery_prompts(prompt) VALUES (?)',prompt)
+        self.assertIn('zero findings',prompt)
+
+    def test_discovery_prompt_storage_preserves_verbatim_text_and_timestamps(self):
+        text = 'Research focus: café\n\nExact quotation: \"test\"\n'
+        with connection(self.database) as conn:
+            cursor=conn.execute('INSERT INTO discovery_prompts(prompt) VALUES (?)',(text,))
+            row=conn.execute('SELECT prompt,created_at,modified_at FROM discovery_prompts WHERE id=?',(cursor.lastrowid,)).fetchone()
+            self.assertEqual(row['prompt'],text)
+            self.assertTrue(row['created_at'])
+            self.assertTrue(row['modified_at'])
+            self.assertEqual(list(conn.execute('PRAGMA foreign_key_list(discovery_prompts)')),[])
+            conn.execute("UPDATE discovery_prompts SET modified_at='2000-01-01' WHERE id=?",(cursor.lastrowid,))
+            conn.execute('UPDATE discovery_prompts SET prompt=? WHERE id=?',(text+'more',cursor.lastrowid))
+            updated=conn.execute('SELECT created_at,modified_at FROM discovery_prompts WHERE id=?',(cursor.lastrowid,)).fetchone()
+            self.assertEqual(updated['created_at'],row['created_at'])
+            self.assertNotEqual(updated['modified_at'],'2000-01-01')
 
 if __name__=='__main__': unittest.main()

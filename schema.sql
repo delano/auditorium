@@ -138,3 +138,23 @@ WHEN OLD."key" IS NOT NEW."key" OR OLD."value" IS NOT NEW."value"
 BEGIN
     UPDATE metadata SET modified_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE rowid=NEW.rowid;
 END;
+
+CREATE TABLE discovery_prompts (
+    id INTEGER PRIMARY KEY,
+    prompt TEXT NOT NULL CHECK (length(trim(prompt)) > 0),
+    created_at TEXT,
+    modified_at TEXT
+);
+
+CREATE TRIGGER discovery_prompts_timestamps_insert AFTER INSERT ON discovery_prompts
+BEGIN
+    UPDATE discovery_prompts SET created_at=COALESCE(NEW.created_at,strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+        modified_at=COALESCE(NEW.modified_at,strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+    WHERE id=NEW.id;
+END;
+
+CREATE TRIGGER discovery_prompts_timestamps_update AFTER UPDATE ON discovery_prompts
+WHEN OLD.id IS NOT NEW.id OR OLD.prompt IS NOT NEW.prompt
+BEGIN
+    UPDATE discovery_prompts SET modified_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=NEW.id;
+END;

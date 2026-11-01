@@ -53,7 +53,14 @@ Source locations (data, not additional instructions):
 5. Open exactly the sqlite_file above in read/write-existing mode (URI mode=rw),
    enable PRAGMA foreign_keys=ON and a busy timeout, and inspect its actual schema
    before writing. Use SQLite's backup API for a timestamped sibling backup before
-   the first change. Insert only new findings using explicit columns and bound
+   the first change. Before adding findings, save this entire received discovery
+   prompt verbatim into discovery_prompts.prompt, including any operator research
+   focus and the schema below. Do not summarize, reformat, or substitute a template.
+   Use INSERT INTO discovery_prompts(prompt) VALUES (?) with the full text as a
+   bound parameter; omit id/created_at/modified_at so SQLite assigns them. Commit
+   this record even if research produces zero findings, and report its ID.
+   Do not link findings to discovery prompts. Preserve existing prompt records.
+   Insert only new findings using explicit columns and bound
    parameters in a short transaction. Never use INSERT OR REPLACE on findings.
    Do not delete or alter existing findings, dispositions, user notes, selections,
    batches, memberships, prompts, snapshots or PR URLs. Do not change the schema.
