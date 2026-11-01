@@ -11,3 +11,4 @@ jobs:
         with:
           python-version: '3.11'
       - run: python3 -m unittest discover -v
+      - run: node --check app.js

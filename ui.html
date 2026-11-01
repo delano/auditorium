@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>Auditorium · Review by exception</title>
+    <link rel="stylesheet" href="/style.css" />
+    <script src="/app.js" defer></script>
+  </head>
+  <body>
+    <header>
+      <div class="heading">
+        <div>
+          <p class="eyebrow">Auditorium <span id="version"></span></p>
+          <h1>Documentation review</h1>
+        </div>
+        <div class="actions">
+          <button id="discover">Discover findings…</button
+          ><button id="reload">Reload</button>
+        </div>
+      </div>
+      <div class="file-line">
+        <span>SQLite</span><code id="database-path"></code
+        ><button id="files" class="quiet">Change file…</button>
+      </div>
+      <div id="file-controls" hidden>
+        <label>SQLite file<input id="file-path" type="text" /></label>
+        <div class="actions">
+          <button id="browse">Browse…</button
+          ><button id="load">Load file</button
+          ><button id="new">New file…</button>
+        </div>
+        <p id="file-feedback" role="status"></p>
+      </div>
+      <nav aria-label="Workspace">
+        <button data-tab="findings">Findings</button
+        ><button data-tab="batches">Batches</button
+        ><button data-tab="review">Review</button
+        ><button data-tab="handoffs">Handoffs</button
+        ><button data-tab="about">About</button>
+      </nav>
+    </header>
+    <main>
+      <p id="global-feedback" role="status"></p>
+      <div id="content"></div>
+    </main>
+    <div id="dialogs"></div>
+  </body>
+</html>
