@@ -17,7 +17,7 @@ DEFAULT_DB = HERE / 'data' / 'auditorium.sqlite'
 TABLES = ('findings', 'coverage', 'metadata', 'batches', 'batch_findings', 'batch_pull_requests', 'discovery_prompts')
 REQUIRED_COLUMNS = {
     'discovery_prompts': {'id','prompt','created_at','modified_at'},
-    'findings': set('id severity confidence category locale path line title issue reader_impact evidence suggested_correction verification status page_url page_branch verbatim_content reason in_batch fix_notes created_at modified_at'.split()),
+    'findings': set('id severity confidence category locale path line title issue reader_impact evidence suggested_correction verification status page_url page_branch target_branch verbatim_content reason in_batch fix_notes created_at modified_at'.split()),
     'coverage': set('path locale publication review_status review_basis notes created_at modified_at'.split()),
     'metadata': {'key', 'value', 'created_at', 'modified_at'},
     'batches': set('id name branch worktree is_current created_at modified_at status base_branch base_revision agent_prompt finding_snapshot submitted_at finished_at error result_summary handoff_dismissed'.split()),
@@ -43,8 +43,9 @@ def audit_database(value):
                     raise ValueError('This file does not match the current audit schema. Open it with its matching application snapshot.')
             triggers = {row[0] for row in conn.execute("SELECT name FROM sqlite_schema WHERE type='trigger'")}
             required = {table+'_timestamps_'+event for table in TABLES for event in ('insert','update')}
+            required.add('findings_target_default')
             if not required.issubset(triggers):
-                raise ValueError('This file does not match the current audit schema. Timestamp triggers are missing.')
+                raise ValueError('This file does not match the current audit schema. Required triggers are missing.')
     except sqlite3.Error as exc:
         raise ValueError('Unable to read an audit SQLite database: '+str(exc)) from exc
     return path
@@ -128,7 +129,7 @@ class Handler(BaseHTTPRequestHandler):
         if origin not in expected:
             self.send_json(403, {'error': 'Changes must be made from this local viewer.'})
             return
-        if self.path not in ('/api/batch', '/api/notes', '/api/delete', '/api/submit-batch',
+        if self.path not in ('/api/batch', '/api/notes', '/api/finding-target', '/api/delete', '/api/submit-batch',
                              '/api/new-batch','/api/select-batch','/api/dismiss-handoff','/api/batch-pr',
                              '/api/load-database','/api/create-database','/api/file-dialog'):
             self.send_json(404, {'error': 'Not found'})
@@ -180,6 +181,8 @@ class Handler(BaseHTTPRequestHandler):
                 raise ValueError('in_batch must be a boolean')
             if self.path == '/api/notes' and not isinstance(payload.get('fix_notes'), str):
                 raise ValueError('fix_notes must be text')
+            if self.path == '/api/finding-target' and payload.get('target_branch') not in ('main','develop'):
+                raise ValueError('Choose main or develop as the target branch.')
             with sqlite3.connect(database) as conn:
                 conn.execute('PRAGMA foreign_keys=ON')
                 conn.execute('BEGIN IMMEDIATE')
@@ -187,7 +190,7 @@ class Handler(BaseHTTPRequestHandler):
                     WHERE bf.finding_id=? AND b.status<>'draft' LIMIT 1''',(payload['id'],)).fetchone()
                 current_sealed = conn.execute("SELECT 1 FROM batches WHERE is_current=1 AND status<>'draft'").fetchone()
                 if sealed or (self.path=='/api/batch' and current_sealed):
-                    self.send_json(409,{'error':'This batch has been submitted. Its scope and notes are preserved for the agent.'})
+                    self.send_json(409,{'error':'This batch has been submitted. Its target, scope and notes are preserved for the agent.'})
                     return
                 if self.path=='/api/batch' and payload['in_batch']:
                     other=conn.execute('''SELECT bf.batch_id FROM batch_findings bf JOIN batches b ON b.id=bf.batch_id
@@ -199,6 +202,8 @@ class Handler(BaseHTTPRequestHandler):
                     result = conn.execute('UPDATE findings SET in_batch=? WHERE id=?', (int(payload['in_batch']), payload['id']))
                 elif self.path == '/api/notes':
                     result = conn.execute('UPDATE findings SET fix_notes=? WHERE id=?', (payload['fix_notes'], payload['id']))
+                elif self.path == '/api/finding-target':
+                    result = conn.execute('UPDATE findings SET target_branch=? WHERE id=?', (payload['target_branch'], payload['id']))
                 else:
                     result = conn.execute('DELETE FROM findings WHERE id=?', (payload['id'],))
                 if not result.rowcount:

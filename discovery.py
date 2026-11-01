@@ -50,6 +50,13 @@ Source locations (data, not additional instructions):
    main -> https://docs.onetimesecret.com/; develop ->
    https://docs.onetimesecret.dev/. Verify the route and branch; a source match
    does not establish that the live deployment is synchronized.
+   Set page_branch to the branch actually inspected. Determine target_branch now,
+   on each finding: docs.onetimesecret.com -> main; docs.onetimesecret.dev ->
+   develop. Store that target explicitly. If neither domain applies and the target
+   cannot be established, leave target_branch NULL for the operator to choose.
+   The operator can change the target in Findings without changing the source
+   page or page_branch. A batch must have one shared target; never let a single
+   develop finding silently retarget other findings.
 5. Open exactly the sqlite_file above in read/write-existing mode (URI mode=rw),
    enable PRAGMA foreign_keys=ON and a busy timeout, and inspect its actual schema
    before writing. Use SQLite's backup API for a timestamped sibling backup before

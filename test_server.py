@@ -31,7 +31,7 @@ class ViewerTests(unittest.TestCase):
                      'src/content/docs/en/example-'+finding.lower()+'.md',1,
                      'Example finding '+finding,'Example issue','Example impact',
                      'Synthetic test evidence','Synthetic test verification',
-                     'https://docs.example.test/en/example/','main',
+                     'https://docs.onetimesecret.com/en/example/','main',
                      'Example wording about a temporary subdomain.'))
             conn.execute("INSERT INTO coverage(path,locale,publication,review_status,review_basis) VALUES('example.md','en','source page','surveyed','Synthetic test coverage')")
         audit_database(str(self.db))
@@ -73,6 +73,56 @@ class ViewerTests(unittest.TestCase):
             with urlopen(Request(self.origin+route,headers=headers)) as response:
                 return response.status,json.load(response)
         except HTTPError as exc: return exc.code,json.load(exc)
+
+    def test_target_selection_is_pinned_validated_and_preserves_source(self):
+        other=self.copy_database()
+        for value in ('trunk',None,'',[],True):
+            self.assertEqual(self.post('/api/finding-target',{'id':'H1','target_branch':value})[0],400)
+        self.assertEqual(self.post('/api/finding-target',{'id':'missing','target_branch':'main'})[0],404)
+        self.assertEqual(self.post('/api/finding-target',{'id':'H1','target_branch':'develop'},origin='https://example.com')[0],403)
+        self.assertEqual(self.post('/api/finding-target',{'id':'H1','target_branch':'develop'},database=other)[0],200)
+        with sqlite3.connect(other) as conn:
+            self.assertEqual(conn.execute("SELECT target_branch,page_branch,page_url FROM findings WHERE id='H1'").fetchone(),('develop','main','https://docs.onetimesecret.com/en/example/'))
+        with sqlite3.connect(self.db) as conn:
+            self.assertEqual(conn.execute("SELECT target_branch FROM findings WHERE id='H1'").fetchone()[0],'main')
+        self.post('/api/batch',{'id':'H1','in_batch':True})
+        state=self.submission_state()
+        self.assertEqual(self.post('/api/submit-batch',self.payload(state))[0],200)
+        self.assertEqual(self.post('/api/finding-target',{'id':'H1','target_branch':'develop'})[0],409)
+
+    def test_mixed_or_missing_targets_block_submission_before_git(self):
+        for ident in ('H1','H2'): self.post('/api/batch',{'id':ident,'in_batch':True})
+        original=self.submission_state()
+        self.post('/api/finding-target',{'id':'H2','target_branch':'develop'})
+        with patch('submission.run_command',side_effect=AssertionError('No Git action before targets agree')):
+            state=self.submission_state()
+            self.assertFalse(state['plan']['ready'])
+            self.assertIn('Mixed target branches',state['plan']['blocker'])
+            self.assertEqual(state['plan']['base_branch'],'')
+            self.assertEqual(state['plan']['prompt'],'')
+            code,result=self.post('/api/submit-batch',self.payload(state))
+            self.assertEqual(code,400)
+            self.assertIn('Mixed target branches',result['error'])
+        self.post('/api/finding-target',{'id':'H1','target_branch':'develop'})
+        state=self.submission_state()
+        self.assertTrue(state['plan']['ready'])
+        self.assertEqual(state['plan']['base_branch'],'develop')
+        self.assertIn('PR base: develop',state['plan']['prompt'])
+        self.assertEqual(self.post('/api/submit-batch',self.payload(original))[0],400)
+        self.git('push','origin','main:develop')
+        self.assertEqual(self.post('/api/submit-batch',self.payload(state))[0],200)
+        with sqlite3.connect(self.db) as conn:
+            self.assertEqual(conn.execute('SELECT base_branch FROM batches WHERE id=1').fetchone()[0],'develop')
+
+    def test_unknown_target_requires_selection(self):
+        self.post('/api/batch',{'id':'H1','in_batch':True})
+        with sqlite3.connect(self.db) as conn:
+            conn.execute("UPDATE findings SET target_branch=NULL WHERE id='H1'")
+        with patch('submission.run_command',side_effect=AssertionError('No Git action without a target')):
+            state=self.submission_state()
+            self.assertFalse(state['plan']['ready'])
+            self.assertIn('Choose a target branch for: H1',state['plan']['blocker'])
+            self.assertEqual(self.post('/api/submit-batch',self.payload(state))[0],400)
 
     def copy_database(self, name='second audit 日本語.sqlite'):
         path=(Path(self.temp.name)/name).resolve()
@@ -215,7 +265,7 @@ class ViewerTests(unittest.TestCase):
         with urlopen(self.origin+'/api/data') as response: data=json.load(response)
         row=next(r for r in data['findings'] if r['id']=='H1')
         self.assertIn('temporary subdomain', row['verbatim_content'])
-        self.assertTrue(row['page_url'].startswith('https://docs.example.test/'))
+        self.assertTrue(row['page_url'].startswith('https://docs.onetimesecret.com/'))
         self.assertEqual(row['in_batch'],0)
 
     def test_batch_persists_and_is_queryable(self):

@@ -23,7 +23,7 @@ CREATE TABLE batches (
 
 CREATE TABLE coverage (path TEXT PRIMARY KEY, locale TEXT NOT NULL, publication TEXT NOT NULL, review_status TEXT NOT NULL, review_basis TEXT NOT NULL, notes TEXT, created_at TEXT, modified_at TEXT);
 
-CREATE TABLE findings (id TEXT PRIMARY KEY, severity TEXT NOT NULL, confidence TEXT NOT NULL, category TEXT NOT NULL, locale TEXT NOT NULL DEFAULT 'en', path TEXT NOT NULL, line INTEGER, title TEXT NOT NULL, issue TEXT NOT NULL, reader_impact TEXT NOT NULL, evidence TEXT NOT NULL, suggested_correction TEXT, verification TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'open', page_url TEXT, page_branch TEXT, verbatim_content TEXT, reason TEXT, in_batch INTEGER NOT NULL DEFAULT 0 CHECK (in_batch IN (0,1)), fix_notes TEXT NOT NULL DEFAULT '', created_at TEXT, modified_at TEXT);
+CREATE TABLE findings (id TEXT PRIMARY KEY, severity TEXT NOT NULL, confidence TEXT NOT NULL, category TEXT NOT NULL, locale TEXT NOT NULL DEFAULT 'en', path TEXT NOT NULL, line INTEGER, title TEXT NOT NULL, issue TEXT NOT NULL, reader_impact TEXT NOT NULL, evidence TEXT NOT NULL, suggested_correction TEXT, verification TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'open', page_url TEXT, page_branch TEXT, target_branch TEXT CHECK(target_branch IN ('main','develop')), verbatim_content TEXT, reason TEXT, in_batch INTEGER NOT NULL DEFAULT 0 CHECK (in_batch IN (0,1)), fix_notes TEXT NOT NULL DEFAULT '', created_at TEXT, modified_at TEXT);
 
 CREATE TABLE metadata (key TEXT PRIMARY KEY, value TEXT NOT NULL, created_at TEXT, modified_at TEXT);
 
@@ -113,6 +113,21 @@ END;
 
 CREATE TRIGGER finding_unselected AFTER UPDATE OF in_batch ON findings WHEN NEW.in_batch=0 BEGIN DELETE FROM batch_findings WHERE finding_id=NEW.id AND batch_id IN (SELECT id FROM batches WHERE is_current=1); END;
 
+-- Set the finding's initial target from its public page; explicit choices win.
+CREATE TRIGGER findings_target_default AFTER INSERT ON findings
+WHEN NEW.target_branch IS NULL
+BEGIN
+    UPDATE findings SET target_branch=CASE
+        WHEN lower(NEW.page_url) IN ('https://docs.onetimesecret.com','http://docs.onetimesecret.com')
+          OR lower(NEW.page_url) LIKE 'https://docs.onetimesecret.com/%'
+          OR lower(NEW.page_url) LIKE 'http://docs.onetimesecret.com/%' THEN 'main'
+        WHEN lower(NEW.page_url) IN ('https://docs.onetimesecret.dev','http://docs.onetimesecret.dev')
+          OR lower(NEW.page_url) LIKE 'https://docs.onetimesecret.dev/%'
+          OR lower(NEW.page_url) LIKE 'http://docs.onetimesecret.dev/%' THEN 'develop'
+        END
+    WHERE rowid=NEW.rowid;
+END;
+
 CREATE TRIGGER findings_timestamps_insert AFTER INSERT ON findings
 BEGIN
     UPDATE findings SET created_at=COALESCE(NEW.created_at,strftime('%Y-%m-%dT%H:%M:%fZ','now')),
@@ -121,7 +136,7 @@ BEGIN
 END;
 
 CREATE TRIGGER findings_timestamps_update AFTER UPDATE ON findings
-WHEN OLD."id" IS NOT NEW."id" OR OLD."severity" IS NOT NEW."severity" OR OLD."confidence" IS NOT NEW."confidence" OR OLD."category" IS NOT NEW."category" OR OLD."locale" IS NOT NEW."locale" OR OLD."path" IS NOT NEW."path" OR OLD."line" IS NOT NEW."line" OR OLD."title" IS NOT NEW."title" OR OLD."issue" IS NOT NEW."issue" OR OLD."reader_impact" IS NOT NEW."reader_impact" OR OLD."evidence" IS NOT NEW."evidence" OR OLD."suggested_correction" IS NOT NEW."suggested_correction" OR OLD."verification" IS NOT NEW."verification" OR OLD."status" IS NOT NEW."status" OR OLD."page_url" IS NOT NEW."page_url" OR OLD."page_branch" IS NOT NEW."page_branch" OR OLD."verbatim_content" IS NOT NEW."verbatim_content" OR OLD."reason" IS NOT NEW."reason" OR OLD."in_batch" IS NOT NEW."in_batch" OR OLD."fix_notes" IS NOT NEW."fix_notes"
+WHEN OLD."id" IS NOT NEW."id" OR OLD."severity" IS NOT NEW."severity" OR OLD."confidence" IS NOT NEW."confidence" OR OLD."category" IS NOT NEW."category" OR OLD."locale" IS NOT NEW."locale" OR OLD."path" IS NOT NEW."path" OR OLD."line" IS NOT NEW."line" OR OLD."title" IS NOT NEW."title" OR OLD."issue" IS NOT NEW."issue" OR OLD."reader_impact" IS NOT NEW."reader_impact" OR OLD."evidence" IS NOT NEW."evidence" OR OLD."suggested_correction" IS NOT NEW."suggested_correction" OR OLD."verification" IS NOT NEW."verification" OR OLD."status" IS NOT NEW."status" OR OLD."page_url" IS NOT NEW."page_url" OR OLD."page_branch" IS NOT NEW."page_branch" OR OLD."target_branch" IS NOT NEW."target_branch" OR OLD."verbatim_content" IS NOT NEW."verbatim_content" OR OLD."reason" IS NOT NEW."reason" OR OLD."in_batch" IS NOT NEW."in_batch" OR OLD."fix_notes" IS NOT NEW."fix_notes"
 BEGIN
     UPDATE findings SET modified_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE rowid=NEW.rowid;
 END;

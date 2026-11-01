@@ -200,18 +200,31 @@ def batch_plan(conn, repository=DEFAULT_REPO, database=None, batch_id=None):
     topics = sorted({Path(f['path']).parent.name for f in findings})[:2]
     slug = re.sub(r'[^a-z0-9-]+','-',f'docs-audit-{batch["id"]}-'+('-'.join(topics) or 'content')).strip('-')[:75]
     branch = batch['branch'] or 'wip/'+slug
-    base = batch['base_branch'] or ('develop' if any(f['page_branch']=='develop' for f in findings) else 'main')
+    # Findings own the target choice. Submitted batches retain their recorded base.
+    target_blocker = ''
+    if batch['status'] == 'draft':
+        targets = {f['target_branch'] for f in findings}
+        base = next(iter(targets)) if len(targets) == 1 and None not in targets else ''
+        missing = [f['id'] for f in findings if f['target_branch'] not in ('main','develop')]
+        if not findings:
+            target_blocker = 'Add findings before submitting the batch.'
+        elif missing:
+            target_blocker = 'Choose a target branch for: '+', '.join(missing)+'.'
+        elif len(targets) > 1:
+            target_blocker = 'Mixed target branches. Choose the same target for these findings, or move them into separate batches.'
+    else:
+        base = batch['base_branch']
     worktree = batch['worktree'] or str(repository.parent/'docs-audit-worktrees'/slug)
     snapshot = [{key:f.get(key) for key in (
-        'id','title','severity','path','line','page_url','verbatim_content','reason',
+        'id','title','severity','path','line','page_url','page_branch','target_branch','verbatim_content','reason',
         'suggested_correction','fix_notes','evidence','verification'
     )} for f in findings]
-    prompt = agent_prompt(batch['id'],repository,branch,worktree,base,snapshot,database,batch['base_revision'])
+    prompt = agent_prompt(batch['id'],repository,branch,worktree,base,snapshot,database,batch['base_revision']) if base else ''
     if batch['status']!='draft' and batch['agent_prompt']:
         prompt = batch['agent_prompt']
     fingerprint = hashlib.sha256(json.dumps({'id':batch['id'],'findings':snapshot,
         'base':base,'mode':MODE},sort_keys=True,ensure_ascii=False).encode()).hexdigest()
-    blocker = setup_check(repository,branch,worktree,base) if batch['status']=='draft' else ''
+    blocker = target_blocker or (setup_check(repository,branch,worktree,base) if batch['status']=='draft' else '')
     return {'batch_id':batch['id'],'status':batch['status'],'mode':MODE,
         'branch':branch,'base_branch':base,'worktree':worktree,'prompt':prompt,
         'fingerprint':fingerprint,'finding_ids':[f['id'] for f in findings],
