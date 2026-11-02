@@ -133,7 +133,7 @@ class Handler(BaseHTTPRequestHandler):
                                 }
                             ],
                             "accept",
-                            payload.get("notes", ""),
+                            "",
                         )
                 return self.send(200, {"state": core.state(database)})
             result = core.action(database, payload)

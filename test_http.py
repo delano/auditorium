@@ -92,6 +92,25 @@ class HttpTests(Fixture):
         self.assertEqual(status, 400)
         self.assertEqual(core.state(self.db)["checks"], [])
 
+    def test_own_check_cannot_use_generic_summary_as_stale_override(self):
+        c = self.report()["checks"][0]
+        self.observe()
+        with patch("core.tree_at", return_value={"A.md": "blob-a"}):
+            status, _ = self.send(
+                "POST",
+                "/api/action",
+                {
+                    "database_id": self.uid,
+                    "action": "own_check",
+                    "batch_id": 1,
+                    "check": c,
+                    "accept": True,
+                    "notes": c["summary"],
+                },
+            )
+        self.assertEqual(status, 400)
+        self.assertEqual(core.state(self.db)["checks"], [])
+
     def test_own_check_and_acceptance_one_action(self):
         c = self.report()["checks"][0]
         with patch("core.tree_at", return_value={"A.md": "blob-a"}):

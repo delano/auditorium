@@ -146,7 +146,11 @@ def latest(conn, table, batch, finding):
 def freshness(check, pr):
     if not check:
         return "unchecked", "No check recorded"
-    if not pr or not pr["observed_at"] or pr["sync_error"] or not pr["metadata"]:
+    if pr and pr["sync_error"]:
+        return "unknown", "PR synchronization failed: " + pr[
+            "sync_error"
+        ] + " · Retry Sync PRs"
+    if not pr or not pr["observed_at"] or not pr["metadata"]:
         return "unknown", "Sync PRs to establish the source revision"
     if json.loads(pr["metadata"])["head_sha"] == check["revision"]:
         return "current", "Checked PR revision"
@@ -461,7 +465,7 @@ Report format: {"contract":"brenda","database_id":"UUID","handoff_id":ID,"receiv
 Report format: {{"contract":"brenda","database_id":"UUID","handoff_id":ID,"pr_urls":["https://github.com/{ws["github"]}/pull/NUMBER"]}}
 """
     else:
-        prompt += """Validate only the handoff members against current PR heads, prior checks and operator instructions. Start at each exact finding.page_url for published context and inspect proposed source at the recorded PR revision. Do not start local previews, execute examples/apps, or run tests unless explicitly instructed. Source and existing CI inspection are allowed. Label published screenshots as a baseline when they do not contain unmerged changes. Use focused readable passage screenshots for visible content when useful, zero images where they add no evidence. Avoid full-page captures. Never imply source inspection is runtime validation.
+        prompt += """Validate only the handoff members against current PR heads, prior checks and operator instructions. Start at each exact finding.page_url for published context and inspect proposed source at the recorded PR revision. Do not start local previews, execute examples/apps, or run tests unless explicitly instructed. Source and existing CI inspection are allowed. Label published screenshots as a baseline when they do not contain unmerged changes. Use focused readable passage screenshots for visible content when useful, zero images where they add no evidence. Avoid full-page captures. Never imply source inspection is runtime validation. If a necessary check cannot be performed within this scope, record blocked and state the material limitation; do not mark an unperformed behavior check as passed.
 Each result normally needs one sentence about the original problem. Omit first-person process, command-output lists and incidental fixes. Explain substantive concerns with decisive evidence and a remedy. Declare ALL supporting documentation paths in source_paths, including the finding path. Freshness covers this declared scope only. Include the exact proposed passage in proposed, or empty text for removal. outcome is pass/needs_work/blocked; recommendation is accept/needs_work/revert. Recommend accept only for pass. target_url is the URL actually inspected. Preserve prior checks. Do not edit docs, merge, revert, accept or complete work.
 Report format: {"contract":"brenda","database_id":"UUID","handoff_id":ID,"checks":[{"finding_id":"ID","pr_id":NUMBER,"revision":"FULL_40_CHARACTER_SHA","source_paths":["source/path"],"proposed":"exact proposed passage","outcome":"pass","recommendation":"accept","summary":"Result or real concern","target_url":"https://...","screenshots":[{"path":"/absolute/path/image.png","label":"Published baseline — affected paragraph"}]}]}
 """

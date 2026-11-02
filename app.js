@@ -1098,7 +1098,14 @@ function ownCheck(batch, i, prs) {
     pr.append(o);
   }
   if (draft) pr.value = draft.pr;
-  const revision = input("text", draft?.revision ?? i.check?.revision ?? ""),
+  const revision = input(
+      "text",
+      draft?.revision ??
+        JSON.parse(prs.find((p) => p.id === Number(pr.value))?.metadata || "{}")
+          .head_sha ??
+        i.check?.revision ??
+        "",
+    ),
     outcome = el("select");
   for (const t of ["pass", "needs_work", "blocked"]) {
     const o = el("option", t);
@@ -1132,6 +1139,12 @@ function ownCheck(batch, i, prs) {
       target: target.value,
       accept: accept.checked,
     });
+  pr.addEventListener("change", () => {
+    revision.value =
+      JSON.parse(prs.find((p) => p.id === Number(pr.value))?.metadata || "{}")
+        .head_sha || "";
+    remember();
+  });
   form.addEventListener("input", remember);
   form.addEventListener("change", remember);
   form.append(
