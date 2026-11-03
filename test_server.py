@@ -168,10 +168,18 @@ class ViewerTests(unittest.TestCase):
         return path
 
     def test_load_database_pins_reads_and_writes_without_changing_other_tabs(self):
-        other=self.copy_database()
+        other=self.copy_database('Second audit 日本語 "quoted".sqlite')
         with sqlite3.connect(other) as conn:
             conn.execute("UPDATE findings SET title='Second database only' WHERE id='H1'")
-        self.assertEqual(self.post('/api/load-database',{'path':str(other)})[0],200)
+        before=other.read_bytes()
+        inode=other.stat().st_ino
+        selected=subprocess.CompletedProcess([],0,stdout=json.dumps(str(other)),stderr='')
+        with patch('database_files.sys.platform','darwin'), patch('database_files.subprocess.run',return_value=selected):
+            code,choice=self.post('/api/file-dialog',{'operation':'load'})
+        self.assertEqual(code,200,choice)
+        self.assertEqual(choice,{'path':str(other),'cancelled':False})
+        self.assertEqual(other.read_bytes(),before)
+        self.assertEqual(self.post('/api/load-database',{'path':choice['path']})[0],200)
         code,data=self.get('/api/data',other)
         self.assertEqual(code,200)
         self.assertEqual(data['schema']['database'],str(other))
@@ -183,6 +191,7 @@ class ViewerTests(unittest.TestCase):
             self.assertEqual(conn.execute("SELECT fix_notes,in_batch FROM findings WHERE id='H1'").fetchone(),('Only in the second file',1))
         with sqlite3.connect(self.db) as conn:
             self.assertEqual(conn.execute("SELECT fix_notes,in_batch FROM findings WHERE id='H1'").fetchone(),('',0))
+        self.assertEqual(other.stat().st_ino,inode)
         self.assertEqual(self.get('/api/schema',other)[1]['schema']['database'],str(other))
         self.assertEqual(self.get('/api/batches',other)[1]['submission']['plan']['finding_ids'],['H1'])
         self.assertEqual(self.get('/api/batches')[1]['submission']['plan']['finding_ids'],[])
@@ -235,14 +244,16 @@ class ViewerTests(unittest.TestCase):
             picker.assert_not_called()
         self.assertEqual(self.post('/api/file-dialog',{'operation':'invalid'})[0],400)
 
+    @patch('database_files.sys.platform','darwin')
     def test_native_dialog_uses_arguments_and_handles_cancel_failure_and_busy(self):
-        result=subprocess.CompletedProcess([],0,stdout=str(self.db)+'\n',stderr='')
+        result=subprocess.CompletedProcess([],0,stdout=json.dumps(str(self.db))+'\n',stderr='')
         with patch('database_files.subprocess.run',return_value=result) as run:
             self.assertEqual(database_files.file_dialog('load',self.db.parent),str(self.db))
             args=run.call_args.args[0]
-            self.assertEqual(args[:2],['osascript','-e'])
-            self.assertEqual(args[3:5],['load',str(self.db.parent)])
-        with patch('database_files.subprocess.run',return_value=subprocess.CompletedProcess([],0,stdout='\n',stderr='')):
+            self.assertEqual(args[:3],[str(database_files.NATIVE_PICKER),'load',str(self.db.parent)])
+            self.assertTrue(args[3].endswith('.sqlite'))
+            self.assertEqual(run.call_args.kwargs['timeout'],300)
+        with patch('database_files.subprocess.run',return_value=subprocess.CompletedProcess([],0,stdout='""\n',stderr='')):
             self.assertEqual(database_files.file_dialog('create',self.db.parent),'')
         with patch('database_files.subprocess.run',return_value=subprocess.CompletedProcess([],1,stdout='',stderr='Dialog error')):
             with self.assertRaisesRegex(ValueError,'Dialog error'):
