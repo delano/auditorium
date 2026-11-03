@@ -1,9 +1,11 @@
 """Storage checks independent of the HTTP viewer and any working ledger."""
 from pathlib import Path
 import sqlite3
+import subprocess
 import tempfile
 import unittest
-from database_files import create_database
+from unittest.mock import patch
+from database_files import create_database, file_dialog, DIALOG_LOCK
 
 class DatabaseFilesTests(unittest.TestCase):
     def test_new_file_has_one_draft_and_no_findings(self):
@@ -28,5 +30,30 @@ class DatabaseFilesTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError,'already exists'):
                 create_database(str(path),Path(directory))
             self.assertEqual(path.read_bytes(),b'existing user data')
+
+    @patch('database_files.sys.platform','darwin')
+    def test_picker_errors_release_the_dialog_lock(self):
+        failures = [
+            (FileNotFoundError(), 'make native-picker'),
+            (subprocess.TimeoutExpired('picker',300), 'timed out'),
+        ]
+        for error,message in failures:
+            with self.subTest(error=error), patch('database_files.subprocess.run',side_effect=error):
+                with self.assertRaisesRegex(ValueError,message):
+                    file_dialog('load',Path('/tmp'))
+                self.assertFalse(DIALOG_LOCK.locked())
+        for output in ('not json','null','123'):
+            result=subprocess.CompletedProcess([],0,stdout=output,stderr='')
+            with self.subTest(output=output), patch('database_files.subprocess.run',return_value=result):
+                with self.assertRaisesRegex(ValueError,'invalid path'):
+                    file_dialog('load',Path('/tmp'))
+                self.assertFalse(DIALOG_LOCK.locked())
+
+    @patch('database_files.sys.platform','linux')
+    def test_other_platforms_explain_the_path_entry_option(self):
+        with patch('database_files.subprocess.run') as run:
+            with self.assertRaisesRegex(ValueError,'Enter a full file path'):
+                file_dialog('load',Path('/tmp'))
+            run.assert_not_called()
 
 if __name__=='__main__': unittest.main()
